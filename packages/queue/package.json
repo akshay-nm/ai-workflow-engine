@@ -1,0 +1,21 @@
+{
+  "name": "@workflow/queue",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./dist/index.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "clean": "rm -rf dist",
+    "dev": "tsc --watch"
+  },
+  "dependencies": {
+    "bullmq": "^5.34.8",
+    "ioredis": "5.8.2"
+  },
+  "devDependencies": {
+    "typescript": "^5.7.2"
+  }
+}
