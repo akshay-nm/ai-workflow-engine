@@ -1,0 +1,136 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum WorkflowStatus {
+  DRAFT
+  ACTIVE
+  ARCHIVED
+}
+
+enum StepType {
+  LLM
+  HTTP
+  TRANSFORM
+  CONDITION
+  CODE
+  DELAY
+}
+
+enum RunStatus {
+  PENDING
+  RUNNING
+  COMPLETED
+  FAILED
+  CANCELLED
+  PAUSED
+}
+
+model Workflow {
+  id          String         @id @default(cuid())
+  name        String
+  description String?
+  version     Int            @default(1)
+  inputSchema Json?
+  config      Json?
+  status      WorkflowStatus @default(DRAFT)
+
+  steps Step[]
+  edges StepEdge[]
+  runs  WorkflowRun[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([status])
+}
+
+model Step {
+  id           String   @id @default(cuid())
+  workflowId   String
+  workflow     Workflow @relation(fields: [workflowId], references: [id], onDelete: Cascade)
+
+  name         String
+  description  String?
+  type         StepType
+  toolName     String
+  config       Json
+  inputMapping Json     @default("{}")
+  retryConfig  Json?
+  timeout      Int?
+  order        Int
+
+  incomingEdges StepEdge[] @relation("ToStep")
+  outgoingEdges StepEdge[] @relation("FromStep")
+
+  stepRuns StepRun[]
+
+  createdAt DateTime @default(now())
+
+  @@index([workflowId, order])
+}
+
+model StepEdge {
+  id         String   @id @default(cuid())
+  workflowId String
+  workflow   Workflow @relation(fields: [workflowId], references: [id], onDelete: Cascade)
+
+  fromStepId String
+  fromStep   Step   @relation("FromStep", fields: [fromStepId], references: [id], onDelete: Cascade)
+
+  toStepId String
+  toStep   Step   @relation("ToStep", fields: [toStepId], references: [id], onDelete: Cascade)
+
+  condition Json?
+
+  @@unique([fromStepId, toStepId])
+  @@index([workflowId])
+}
+
+model WorkflowRun {
+  id         String   @id @default(cuid())
+  workflowId String
+  workflow   Workflow @relation(fields: [workflowId], references: [id])
+
+  status RunStatus @default(PENDING)
+  input  Json?
+  output Json?
+  error  String?
+
+  stepRuns StepRun[]
+
+  startedAt   DateTime?
+  completedAt DateTime?
+  createdAt   DateTime  @default(now())
+
+  @@index([workflowId, status])
+  @@index([status, createdAt])
+}
+
+model StepRun {
+  id            String      @id @default(cuid())
+  workflowRunId String
+  workflowRun   WorkflowRun @relation(fields: [workflowRunId], references: [id], onDelete: Cascade)
+
+  stepId String
+  step   Step   @relation(fields: [stepId], references: [id])
+
+  status       RunStatus @default(PENDING)
+  input        Json?
+  output       Json?
+  error        String?
+  attemptsMade Int       @default(0)
+  maxAttempts  Int       @default(3)
+
+  startedAt   DateTime?
+  completedAt DateTime?
+  createdAt   DateTime  @default(now())
+
+  @@index([workflowRunId, status])
+  @@index([stepId])
+}
