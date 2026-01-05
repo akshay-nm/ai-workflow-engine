@@ -17,5 +17,5 @@ export interface StepExecuteJobData {
 
 export type WorkflowJobData = WorkflowExecuteJobData | WorkflowContinueJobData;
 
-export const WORKFLOW_QUEUE_NAME = 'workflow:execute';
-export const STEP_QUEUE_NAME = 'step:execute';
+export const WORKFLOW_QUEUE_NAME = 'workflow-execute';
+export const STEP_QUEUE_NAME = 'step-execute';

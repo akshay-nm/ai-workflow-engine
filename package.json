@@ -15,11 +15,13 @@
     "db:generate": "pnpm --filter @workflow/database generate",
     "db:migrate": "pnpm --filter @workflow/database migrate",
     "db:push": "pnpm --filter @workflow/database push",
-    "clean": "pnpm -r clean && rm -rf node_modules"
+    "clean": "pnpm -r clean && rm -rf node_modules",
+    "test:e2e": "tsx scripts/test-workflow.ts"
   },
   "devDependencies": {
     "@types/node": "^22.10.5",
     "@vitest/coverage-v8": "^2.1.8",
+    "tsx": "^4.7.0",
     "vitest": "^2.1.8"
   },
   "engines": {
