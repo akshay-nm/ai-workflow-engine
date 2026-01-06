@@ -1,7 +1,16 @@
-import { prisma } from '@workflow/database';
+import { prisma as defaultPrisma, type PrismaClient } from '@workflow/database';
 import type { Step, StepRun, WorkflowRun } from '@workflow/database';
-import { NotFoundError, WorkflowExecutionError } from '@workflow/shared';
-import { variableResolver, type ResolverContext } from '../variable-resolver/index.js';
+import {
+  NotFoundError,
+  WorkflowExecutionError,
+  type ISequentialOrchestrator,
+  type IVariableResolver,
+} from '@workflow/shared';
+import {
+  VariableResolver,
+  variableResolver as defaultVariableResolver,
+  type ResolverContext,
+} from '../variable-resolver/index.js';
 
 export interface OrchestratorResult {
   completed: boolean;
@@ -9,9 +18,33 @@ export interface OrchestratorResult {
   stepInput: Record<string, unknown> | null;
 }
 
-export class SequentialOrchestrator {
+/**
+ * Dependencies for SequentialOrchestrator
+ */
+export interface SequentialOrchestratorDeps {
+  prisma?: PrismaClient;
+  variableResolver?: IVariableResolver;
+}
+
+/**
+ * Sequential workflow orchestrator.
+ * Executes workflow steps in order based on their `order` field.
+ */
+export class SequentialOrchestrator implements ISequentialOrchestrator {
+  private readonly prisma: PrismaClient;
+  private readonly variableResolver: IVariableResolver;
+
+  /**
+   * Create a new SequentialOrchestrator instance.
+   * @param deps - Optional dependencies. Falls back to defaults if not provided.
+   */
+  constructor(deps: SequentialOrchestratorDeps = {}) {
+    this.prisma = deps.prisma ?? defaultPrisma;
+    this.variableResolver = deps.variableResolver ?? defaultVariableResolver;
+  }
+
   async initialize(workflowRunId: string): Promise<OrchestratorResult> {
-    const workflowRun = await prisma.workflowRun.findUnique({
+    const workflowRun = await this.prisma.workflowRun.findUnique({
       where: { id: workflowRunId },
       include: {
         workflow: {
@@ -32,7 +65,7 @@ export class SequentialOrchestrator {
     }
 
     const context = this.buildContext(workflowRun, []);
-    const stepInput = variableResolver.resolve(
+    const stepInput = this.variableResolver.resolve(
       firstStep.inputMapping,
       context
     ) as Record<string, unknown>;
@@ -48,7 +81,7 @@ export class SequentialOrchestrator {
     workflowRunId: string,
     completedStepRunId: string
   ): Promise<OrchestratorResult> {
-    const workflowRun = await prisma.workflowRun.findUnique({
+    const workflowRun = await this.prisma.workflowRun.findUnique({
       where: { id: workflowRunId },
       include: {
         workflow: {
@@ -92,7 +125,7 @@ export class SequentialOrchestrator {
     }
 
     const context = this.buildContext(workflowRun, workflowRun.stepRuns);
-    const stepInput = variableResolver.resolve(
+    const stepInput = this.variableResolver.resolve(
       nextStep.inputMapping,
       context
     ) as Record<string, unknown>;
@@ -124,4 +157,5 @@ export class SequentialOrchestrator {
   }
 }
 
+/** Default singleton instance for backward compatibility */
 export const sequentialOrchestrator = new SequentialOrchestrator();

@@ -91,7 +91,7 @@ describe('queues', () => {
   it('exports queue names', async () => {
     const { WORKFLOW_QUEUE_NAME, STEP_QUEUE_NAME } = await import('../src/index.js');
 
-    expect(WORKFLOW_QUEUE_NAME).toBe('workflow:execute');
-    expect(STEP_QUEUE_NAME).toBe('step:execute');
+    expect(WORKFLOW_QUEUE_NAME).toBe('workflow-execute');
+    expect(STEP_QUEUE_NAME).toBe('step-execute');
   });
 });

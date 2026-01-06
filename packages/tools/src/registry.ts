@@ -1,15 +1,31 @@
 import { ToolNotFoundError } from '@workflow/shared';
-import type { ToolMetadata } from '@workflow/shared';
+import type { ToolMetadata, IToolRegistry, ITool } from '@workflow/shared';
 import type { Tool } from './base.js';
 
-class ToolRegistry {
+/**
+ * Registry for managing workflow tools.
+ * Supports dependency injection via constructor parameter.
+ */
+export class ToolRegistry implements IToolRegistry {
   private tools = new Map<string, Tool>();
 
-  register(tool: Tool): void {
+  /**
+   * Create a new ToolRegistry instance.
+   * @param initialTools - Optional array of tools to register on construction
+   */
+  constructor(initialTools?: Tool[]) {
+    if (initialTools) {
+      for (const tool of initialTools) {
+        this.register(tool);
+      }
+    }
+  }
+
+  register(tool: Tool | ITool): void {
     if (this.tools.has(tool.name)) {
       throw new Error(`Tool '${tool.name}' is already registered`);
     }
-    this.tools.set(tool.name, tool);
+    this.tools.set(tool.name, tool as Tool);
   }
 
   get<TInput = unknown, TOutput = unknown>(
@@ -35,4 +51,5 @@ class ToolRegistry {
   }
 }
 
+/** Default singleton instance for backward compatibility */
 export const toolRegistry = new ToolRegistry();

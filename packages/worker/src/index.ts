@@ -1,24 +1,33 @@
 import type { Worker } from 'bullmq';
-import { closeConnection, closeQueues } from '@workflow/queue';
-import { registerDefaultTools } from '@workflow/tools';
-import { createLogger } from '@workflow/shared';
-import { createWorkflowWorker, createStepWorker } from './workers/index.js';
-
-const logger = createLogger('worker');
+import { createRootContainer, disposeContainer } from './container/index.js';
+import { registerDefaultTools } from './tools/registration.js';
+import {
+  createWorkflowWorkerWithContainer,
+  createStepWorkerWithContainer,
+} from './workers/index.js';
 
 async function main() {
+  // Create the root container
+  const container = createRootContainer();
+
+  // Get logger from container
+  const logger = container.resolve('createLogger')('worker');
+
   logger.info('Starting worker service...');
 
-  registerDefaultTools();
+  // Register tools with the container's tool registry
+  const toolRegistry = container.resolve('toolRegistry');
+  registerDefaultTools(toolRegistry);
   logger.info('Registered default tools');
 
   const workers: Worker[] = [];
 
-  const workflowWorker = createWorkflowWorker();
+  // Create workers using the container
+  const workflowWorker = createWorkflowWorkerWithContainer(container);
   workers.push(workflowWorker);
   logger.info('Workflow worker started');
 
-  const stepWorker = createStepWorker();
+  const stepWorker = createStepWorkerWithContainer(container);
   workers.push(stepWorker);
   logger.info('Step worker started');
 
@@ -27,9 +36,11 @@ async function main() {
   const shutdown = async () => {
     logger.info('Shutting down workers...');
 
+    // Close workers first
     await Promise.all(workers.map((w) => w.close()));
-    await closeQueues();
-    await closeConnection();
+
+    // Dispose container (closes all connections)
+    await disposeContainer(container);
 
     logger.info('Workers shut down');
     process.exit(0);
@@ -40,6 +51,6 @@ async function main() {
 }
 
 main().catch((err) => {
-  logger.error({ err }, 'Failed to start worker service');
+  console.error('Failed to start worker service', err);
   process.exit(1);
 });

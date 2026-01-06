@@ -1,5 +1,5 @@
 export { BaseTool, type Tool } from './base.js';
-export { toolRegistry } from './registry.js';
+export { ToolRegistry, toolRegistry } from './registry.js';
 
 export { LLMChatTool } from './llm/index.js';
 export { HttpFetchTool } from './http/index.js';

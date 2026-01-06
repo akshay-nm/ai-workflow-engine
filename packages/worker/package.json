@@ -15,7 +15,9 @@
     "@workflow/queue": "workspace:*",
     "@workflow/shared": "workspace:*",
     "@workflow/tools": "workspace:*",
-    "bullmq": "^5.34.8"
+    "awilix": "^12.0.5",
+    "bullmq": "^5.34.8",
+    "ioredis": "5.8.2"
   },
   "devDependencies": {
     "tsx": "^4.19.2",

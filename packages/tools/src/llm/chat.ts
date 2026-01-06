@@ -30,6 +30,23 @@ export const chatOutputSchema = z.object({
 export type ChatInput = z.infer<typeof chatInputSchema>;
 export type ChatOutput = z.infer<typeof chatOutputSchema>;
 
+/**
+ * Configuration options for LLMChatTool
+ */
+export interface LLMChatToolConfig {
+  baseURL?: string;
+  apiKey?: string;
+  defaultModel?: string;
+}
+
+/**
+ * Dependencies for LLMChatTool
+ */
+export interface LLMChatToolDeps {
+  openaiClient?: OpenAI;
+  config?: LLMChatToolConfig;
+}
+
 export class LLMChatTool extends BaseTool<ChatInput, ChatOutput> {
   readonly name = 'llm-chat';
   readonly version = '1.0.0';
@@ -40,13 +57,28 @@ export class LLMChatTool extends BaseTool<ChatInput, ChatOutput> {
   private client: OpenAI;
   private defaultModel: string;
 
-  constructor() {
+  /**
+   * Create a new LLMChatTool instance.
+   * @param deps - Optional dependencies. Falls back to env vars if not provided.
+   */
+  constructor(deps: LLMChatToolDeps = {}) {
     super();
-    this.client = new OpenAI({
-      baseURL: process.env['LLM_BASE_URL'] ?? 'http://localhost:1234/v1',
-      apiKey: process.env['LLM_API_KEY'] ?? 'lm-studio',
-    });
-    this.defaultModel = process.env['LLM_MODEL'] ?? 'local-model';
+
+    if (deps.openaiClient) {
+      this.client = deps.openaiClient;
+    } else {
+      this.client = new OpenAI({
+        baseURL:
+          deps.config?.baseURL ??
+          process.env['LLM_BASE_URL'] ??
+          'http://localhost:1234/v1',
+        apiKey:
+          deps.config?.apiKey ?? process.env['LLM_API_KEY'] ?? 'lm-studio',
+      });
+    }
+
+    this.defaultModel =
+      deps.config?.defaultModel ?? process.env['LLM_MODEL'] ?? 'local-model';
   }
 
   async execute(
