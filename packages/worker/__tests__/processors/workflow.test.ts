@@ -1,68 +1,37 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
-
-const mockPrisma = {
-  workflowRun: {
-    update: vi.fn(),
-    findUnique: vi.fn(),
-  },
-  stepRun: {
-    create: vi.fn(),
-    findMany: vi.fn(),
-  },
-};
-
-const mockOrchestrator = {
-  initialize: vi.fn(),
-  getNextStep: vi.fn(),
-};
-
-const mockStepQueueAdd = vi.fn();
-
-vi.mock('@workflow/database', () => ({
-  prisma: mockPrisma,
-}));
-
-vi.mock('@workflow/engine', () => ({
-  sequentialOrchestrator: mockOrchestrator,
-}));
-
-vi.mock('@workflow/queue', () => ({
-  getStepQueue: vi.fn(() => ({
-    add: mockStepQueueAdd,
-  })),
-}));
-
-vi.mock('@workflow/shared', () => ({
-  createLogger: vi.fn(() => ({
-    info: vi.fn(),
-    error: vi.fn(),
-  })),
-}));
+import { describe, it, expect, beforeEach } from 'vitest';
+import {
+  createTestContainer,
+  createMockStep,
+  createMockWorkflowRun,
+  createMockStepRun,
+  type TestContainerResult,
+} from '../helpers/index.js';
+import type { WorkflowProcessor } from '../../src/processors/workflow.processor.js';
 
 describe('workflow processor', () => {
+  let testContainer: TestContainerResult;
+  let processor: WorkflowProcessor;
+
   beforeEach(() => {
-    vi.clearAllMocks();
+    testContainer = createTestContainer();
+    processor = testContainer.container.resolve('workflowProcessor');
   });
 
-  describe('processWorkflowExecute', () => {
+  describe('processExecute', () => {
     it('updates run status to RUNNING', async () => {
-      mockOrchestrator.initialize.mockResolvedValue({
+      const { mocks } = testContainer;
+
+      mocks.sequentialOrchestrator.initialize.mockResolvedValue({
         completed: true,
         nextStep: null,
         stepInput: null,
       });
 
-      const { processWorkflowExecute } = await import(
-        '../../src/processors/workflow.processor.js'
-      );
+      const jobData = { workflowRunId: 'run-1', workflowId: 'wf-1' };
 
-      const mockJob = {
-        data: { workflowRunId: 'run-1', workflowId: 'wf-1' },
-      };
+      await processor.processExecute(jobData);
 
-      await processWorkflowExecute(mockJob as any);
-
-      expect(mockPrisma.workflowRun.update).toHaveBeenCalledWith({
+      expect(mocks.prisma.workflowRun.update).toHaveBeenCalledWith({
         where: { id: 'run-1' },
         data: {
           status: 'RUNNING',
@@ -72,30 +41,23 @@ describe('workflow processor', () => {
     });
 
     it('enqueues first step when workflow has steps', async () => {
-      mockOrchestrator.initialize.mockResolvedValue({
+      const { mocks } = testContainer;
+
+      mocks.sequentialOrchestrator.initialize.mockResolvedValue({
         completed: false,
-        nextStep: {
+        nextStep: createMockStep({
           id: 'step-1',
           retryConfig: { maxAttempts: 3, backoff: { type: 'exponential', delay: 1000 } },
-          timeout: 30000,
-        },
+        }),
         stepInput: { value: 'test' },
       });
-      mockPrisma.stepRun.create.mockResolvedValue({
-        id: 'sr-1',
-      });
+      mocks.prisma.stepRun.create.mockResolvedValue({ id: 'sr-1' });
 
-      const { processWorkflowExecute } = await import(
-        '../../src/processors/workflow.processor.js'
-      );
+      const jobData = { workflowRunId: 'run-1', workflowId: 'wf-1' };
 
-      const mockJob = {
-        data: { workflowRunId: 'run-1', workflowId: 'wf-1' },
-      };
+      await processor.processExecute(jobData);
 
-      await processWorkflowExecute(mockJob as any);
-
-      expect(mockPrisma.stepRun.create).toHaveBeenCalledWith({
+      expect(mocks.prisma.stepRun.create).toHaveBeenCalledWith({
         data: {
           workflowRunId: 'run-1',
           stepId: 'step-1',
@@ -105,7 +67,7 @@ describe('workflow processor', () => {
         },
       });
 
-      expect(mockStepQueueAdd).toHaveBeenCalledWith(
+      expect(mocks.stepQueue.add).toHaveBeenCalledWith(
         'step.execute',
         expect.objectContaining({
           stepRunId: 'sr-1',
@@ -122,23 +84,19 @@ describe('workflow processor', () => {
     });
 
     it('marks workflow completed when no steps', async () => {
-      mockOrchestrator.initialize.mockResolvedValue({
+      const { mocks } = testContainer;
+
+      mocks.sequentialOrchestrator.initialize.mockResolvedValue({
         completed: true,
         nextStep: null,
         stepInput: null,
       });
 
-      const { processWorkflowExecute } = await import(
-        '../../src/processors/workflow.processor.js'
-      );
+      const jobData = { workflowRunId: 'run-1', workflowId: 'wf-1' };
 
-      const mockJob = {
-        data: { workflowRunId: 'run-1', workflowId: 'wf-1' },
-      };
+      await processor.processExecute(jobData);
 
-      await processWorkflowExecute(mockJob as any);
-
-      expect(mockPrisma.workflowRun.update).toHaveBeenCalledWith({
+      expect(mocks.prisma.workflowRun.update).toHaveBeenCalledWith({
         where: { id: 'run-1' },
         data: {
           status: 'COMPLETED',
@@ -148,63 +106,49 @@ describe('workflow processor', () => {
     });
   });
 
-  describe('processWorkflowContinue', () => {
+  describe('processContinue', () => {
     it('enqueues next step when more steps remain', async () => {
-      mockPrisma.workflowRun.findUnique.mockResolvedValue({
-        id: 'run-1',
-        status: 'RUNNING',
-      });
-      mockOrchestrator.getNextStep.mockResolvedValue({
+      const { mocks } = testContainer;
+
+      mocks.prisma.workflowRun.findUnique.mockResolvedValue(
+        createMockWorkflowRun({ id: 'run-1', status: 'RUNNING' })
+      );
+      mocks.sequentialOrchestrator.getNextStep.mockResolvedValue({
         completed: false,
-        nextStep: {
-          id: 'step-2',
-          retryConfig: null,
-          timeout: null,
-        },
+        nextStep: createMockStep({ id: 'step-2', retryConfig: null }),
         stepInput: { data: 'next' },
       });
-      mockPrisma.stepRun.create.mockResolvedValue({ id: 'sr-2' });
+      mocks.prisma.stepRun.create.mockResolvedValue({ id: 'sr-2' });
 
-      const { processWorkflowContinue } = await import(
-        '../../src/processors/workflow.processor.js'
-      );
+      const jobData = { workflowRunId: 'run-1', completedStepRunId: 'sr-1' };
 
-      const mockJob = {
-        data: { workflowRunId: 'run-1', completedStepRunId: 'sr-1' },
-      };
+      await processor.processContinue(jobData);
 
-      await processWorkflowContinue(mockJob as any);
-
-      expect(mockOrchestrator.getNextStep).toHaveBeenCalledWith('run-1', 'sr-1');
-      expect(mockPrisma.stepRun.create).toHaveBeenCalled();
-      expect(mockStepQueueAdd).toHaveBeenCalled();
+      expect(mocks.sequentialOrchestrator.getNextStep).toHaveBeenCalledWith('run-1', 'sr-1');
+      expect(mocks.prisma.stepRun.create).toHaveBeenCalled();
+      expect(mocks.stepQueue.add).toHaveBeenCalled();
     });
 
     it('marks workflow completed at end', async () => {
-      mockPrisma.workflowRun.findUnique.mockResolvedValue({
-        id: 'run-1',
-        status: 'RUNNING',
-      });
-      mockOrchestrator.getNextStep.mockResolvedValue({
+      const { mocks } = testContainer;
+
+      mocks.prisma.workflowRun.findUnique.mockResolvedValue(
+        createMockWorkflowRun({ id: 'run-1', status: 'RUNNING' })
+      );
+      mocks.sequentialOrchestrator.getNextStep.mockResolvedValue({
         completed: true,
         nextStep: null,
         stepInput: null,
       });
-      mockPrisma.stepRun.findMany.mockResolvedValue([
-        { id: 'sr-1', output: { result: 'final' } },
+      mocks.prisma.stepRun.findMany.mockResolvedValue([
+        createMockStepRun({ id: 'sr-1', output: { result: 'final' } }),
       ]);
 
-      const { processWorkflowContinue } = await import(
-        '../../src/processors/workflow.processor.js'
-      );
+      const jobData = { workflowRunId: 'run-1', completedStepRunId: 'sr-1' };
 
-      const mockJob = {
-        data: { workflowRunId: 'run-1', completedStepRunId: 'sr-1' },
-      };
+      await processor.processContinue(jobData);
 
-      await processWorkflowContinue(mockJob as any);
-
-      expect(mockPrisma.workflowRun.update).toHaveBeenCalledWith({
+      expect(mocks.prisma.workflowRun.update).toHaveBeenCalledWith({
         where: { id: 'run-1' },
         data: {
           status: 'COMPLETED',
@@ -215,22 +159,17 @@ describe('workflow processor', () => {
     });
 
     it('skips processing for cancelled runs', async () => {
-      mockPrisma.workflowRun.findUnique.mockResolvedValue({
-        id: 'run-1',
-        status: 'CANCELLED',
-      });
+      const { mocks } = testContainer;
 
-      const { processWorkflowContinue } = await import(
-        '../../src/processors/workflow.processor.js'
+      mocks.prisma.workflowRun.findUnique.mockResolvedValue(
+        createMockWorkflowRun({ id: 'run-1', status: 'CANCELLED' })
       );
 
-      const mockJob = {
-        data: { workflowRunId: 'run-1', completedStepRunId: 'sr-1' },
-      };
+      const jobData = { workflowRunId: 'run-1', completedStepRunId: 'sr-1' };
 
-      await processWorkflowContinue(mockJob as any);
+      await processor.processContinue(jobData);
 
-      expect(mockOrchestrator.getNextStep).not.toHaveBeenCalled();
+      expect(mocks.sequentialOrchestrator.getNextStep).not.toHaveBeenCalled();
     });
   });
 });

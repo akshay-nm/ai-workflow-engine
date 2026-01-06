@@ -1,100 +1,57 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
-
-const mockPrisma = {
-  stepRun: {
-    update: vi.fn(),
-    findUnique: vi.fn(),
-    findMany: vi.fn(),
-  },
-  step: {
-    findUnique: vi.fn(),
-  },
-  workflowRun: {
-    findUnique: vi.fn(),
-  },
-};
-
-const mockTool = {
-  execute: vi.fn(),
-};
-
-const mockToolRegistry = {
-  get: vi.fn(() => mockTool),
-};
-
-vi.mock('@workflow/database', () => ({
-  prisma: mockPrisma,
-}));
-
-vi.mock('@workflow/tools', () => ({
-  toolRegistry: mockToolRegistry,
-}));
-
-vi.mock('@workflow/shared', () => ({
-  createLogger: vi.fn(() => ({
-    info: vi.fn(),
-    error: vi.fn(),
-  })),
-  StepExecutionError: class StepExecutionError extends Error {
-    constructor(
-      public stepId: string,
-      message: string,
-      public retryable: boolean = true
-    ) {
-      super(`Step '${stepId}' failed: ${message}`);
-    }
-  },
-}));
+import { describe, it, expect, beforeEach } from 'vitest';
+import { StepExecutionError } from '@workflow/shared';
+import {
+  createTestContainer,
+  createMockStep,
+  createMockWorkflowRun,
+  createMockStepRun,
+  type TestContainerResult,
+} from '../helpers/index.js';
+import type { StepProcessor } from '../../src/processors/step.processor.js';
 
 describe('step processor', () => {
+  let testContainer: TestContainerResult;
+  let processor: StepProcessor;
+
   beforeEach(() => {
-    vi.clearAllMocks();
+    testContainer = createTestContainer();
+    processor = testContainer.container.resolve('stepProcessor');
   });
 
-  describe('processStepExecute', () => {
-    const mockJob = {
-      data: {
-        stepRunId: 'sr-1',
-        stepId: 'step-1',
-        workflowRunId: 'run-1',
-        input: { value: 'test' },
-      },
-      attemptsMade: 0,
+  describe('processExecute', () => {
+    const jobData = {
+      stepRunId: 'sr-1',
+      stepId: 'step-1',
+      workflowRunId: 'run-1',
+      input: { value: 'test' },
     };
 
     beforeEach(() => {
-      mockPrisma.step.findUnique.mockResolvedValue({
-        id: 'step-1',
-        toolName: 'http-fetch',
-      });
-      mockPrisma.workflowRun.findUnique.mockResolvedValue({
-        id: 'run-1',
-        workflowId: 'wf-1',
-        status: 'RUNNING',
-        input: {},
-      });
-      mockPrisma.stepRun.findUnique.mockResolvedValue({
-        id: 'sr-1',
-        workflowRunId: 'run-1',
-        stepId: 'step-1',
-        status: 'PENDING',
-      });
-      mockPrisma.stepRun.findMany.mockResolvedValue([]);
+      const { mocks } = testContainer;
+
+      mocks.prisma.step.findUnique.mockResolvedValue(
+        createMockStep({ id: 'step-1', toolName: 'http-fetch' })
+      );
+      mocks.prisma.workflowRun.findUnique.mockResolvedValue(
+        createMockWorkflowRun({ id: 'run-1', workflowId: 'wf-1', status: 'RUNNING' })
+      );
+      mocks.prisma.stepRun.findUnique.mockResolvedValue(
+        createMockStepRun({ id: 'sr-1', workflowRunId: 'run-1', stepId: 'step-1' })
+      );
+      mocks.prisma.stepRun.findMany.mockResolvedValue([]);
     });
 
     it('updates stepRun status to RUNNING', async () => {
-      mockTool.execute.mockResolvedValue({
+      const { mocks } = testContainer;
+
+      mocks.tool.execute.mockResolvedValue({
         success: true,
         data: { result: 'done' },
       });
 
-      const { processStepExecute } = await import(
-        '../../src/processors/step.processor.js'
-      );
+      await processor.processExecute(jobData, 0);
 
-      await processStepExecute(mockJob as any);
-
-      expect(mockPrisma.stepRun.update).toHaveBeenCalledWith({
+      expect(mocks.prisma.stepRun.update).toHaveBeenCalledWith({
         where: { id: 'sr-1' },
         data: {
           status: 'RUNNING',
@@ -105,19 +62,17 @@ describe('step processor', () => {
     });
 
     it('calls tool.execute with input and context', async () => {
-      mockTool.execute.mockResolvedValue({
+      const { mocks } = testContainer;
+
+      mocks.tool.execute.mockResolvedValue({
         success: true,
         data: { result: 'done' },
       });
 
-      const { processStepExecute } = await import(
-        '../../src/processors/step.processor.js'
-      );
+      await processor.processExecute(jobData, 0);
 
-      await processStepExecute(mockJob as any);
-
-      expect(mockToolRegistry.get).toHaveBeenCalledWith('http-fetch');
-      expect(mockTool.execute).toHaveBeenCalledWith(
+      expect(mocks.toolRegistry.get).toHaveBeenCalledWith('http-fetch');
+      expect(mocks.tool.execute).toHaveBeenCalledWith(
         { value: 'test' },
         expect.objectContaining({
           workflowRun: expect.any(Object),
@@ -128,18 +83,16 @@ describe('step processor', () => {
     });
 
     it('stores output on success', async () => {
-      mockTool.execute.mockResolvedValue({
+      const { mocks } = testContainer;
+
+      mocks.tool.execute.mockResolvedValue({
         success: true,
         data: { result: 'done' },
       });
 
-      const { processStepExecute } = await import(
-        '../../src/processors/step.processor.js'
-      );
+      await processor.processExecute(jobData, 0);
 
-      await processStepExecute(mockJob as any);
-
-      expect(mockPrisma.stepRun.update).toHaveBeenCalledWith({
+      expect(mocks.prisma.stepRun.update).toHaveBeenCalledWith({
         where: { id: 'sr-1' },
         data: {
           status: 'COMPLETED',
@@ -150,39 +103,37 @@ describe('step processor', () => {
     });
 
     it('throws StepExecutionError on tool failure', async () => {
-      mockTool.execute.mockResolvedValue({
+      const { mocks } = testContainer;
+
+      mocks.tool.execute.mockResolvedValue({
         success: false,
         error: 'Tool failed',
       });
 
-      const { processStepExecute } = await import(
-        '../../src/processors/step.processor.js'
-      );
-
-      await expect(processStepExecute(mockJob as any)).rejects.toThrow(
+      await expect(processor.processExecute(jobData, 0)).rejects.toThrow(
         "Step 'step-1' failed: Tool failed"
       );
 
-      expect(mockPrisma.stepRun.update).toHaveBeenCalledWith({
+      expect(mocks.prisma.stepRun.update).toHaveBeenCalledWith({
         where: { id: 'sr-1' },
         data: { error: 'Tool failed' },
       });
     });
 
     it('throws for missing step', async () => {
-      mockPrisma.step.findUnique.mockResolvedValue(null);
+      const { mocks } = testContainer;
 
-      const { processStepExecute } = await import(
-        '../../src/processors/step.processor.js'
-      );
+      mocks.prisma.step.findUnique.mockResolvedValue(null);
 
-      await expect(processStepExecute(mockJob as any)).rejects.toThrow(
+      await expect(processor.processExecute(jobData, 0)).rejects.toThrow(
         'Step not found'
       );
     });
 
     it('builds context with previous step outputs', async () => {
-      mockPrisma.stepRun.findMany.mockResolvedValue([
+      const { mocks } = testContainer;
+
+      mocks.prisma.stepRun.findMany.mockResolvedValue([
         {
           id: 'sr-0',
           status: 'COMPLETED',
@@ -190,15 +141,11 @@ describe('step processor', () => {
           step: { name: 'fetch' },
         },
       ]);
-      mockTool.execute.mockResolvedValue({ success: true, data: {} });
+      mocks.tool.execute.mockResolvedValue({ success: true, data: {} });
 
-      const { processStepExecute } = await import(
-        '../../src/processors/step.processor.js'
-      );
+      await processor.processExecute(jobData, 0);
 
-      await processStepExecute(mockJob as any);
-
-      expect(mockTool.execute).toHaveBeenCalledWith(
+      expect(mocks.tool.execute).toHaveBeenCalledWith(
         expect.any(Object),
         expect.objectContaining({
           previousOutputs: { fetch: { data: 'previous' } },
@@ -207,16 +154,14 @@ describe('step processor', () => {
     });
 
     it('returns output on success', async () => {
-      mockTool.execute.mockResolvedValue({
+      const { mocks } = testContainer;
+
+      mocks.tool.execute.mockResolvedValue({
         success: true,
         data: { result: 'done' },
       });
 
-      const { processStepExecute } = await import(
-        '../../src/processors/step.processor.js'
-      );
-
-      const result = await processStepExecute(mockJob as any);
+      const result = await processor.processExecute(jobData, 0);
 
       expect(result).toEqual({ result: 'done' });
     });
